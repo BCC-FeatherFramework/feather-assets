@@ -12,8 +12,9 @@ service for ownership truth. Native Feather; no legacy compatibility layer.
 
 Implements phases A0–A2 of the Assets master plan (`feather-framework-docs`,
 `feather-assets/Feather_Assets_Master_Plan.md`) on the Contract 1 service
-kernel. A3 (runtime adapters) is delivered by the Feather ports of the BCC
-stables, wagons and boats resources. A4 (second-type validation) happens during
+kernel. The first A3 runtime adapter, `bcc-stables` 2.0.0, is implemented
+and running on the development server; several live flows still need validation.
+Wagon and boat adapters remain planned. A4 (second-type validation) happens during
 the `bcc-wagons` port. A5 (Access decision) belongs to `feather-access`.
 
 Shipped defaults use `Config.DevMode=false` with service-policy authorization
@@ -86,7 +87,7 @@ AssetsLifecycleSmokeTest <serverId|characterUuid> <otherServerId|otherCharacterU
 Expect 21/21. The test mutates data: it registers a uniquely provenanced smoke
 horse for the first character, races two concurrent transfers to the second
 (exactly one must win), revises metadata and status, and retires the horse. Set
-DevMode back to `false` afterwards.
+DevMode back to `false` and restart feather-assets afterwards.
 
 If the first mutation returns `authorization_denied` with
 `policyCode=service_forbidden`, restart feather-admin so it loads the
@@ -94,8 +95,9 @@ If the first mutation returns `authorization_denied` with
 
 ## A0 consumer inventory
 
-The three BCC resources (BryceCanyonCounty upstream, VORP-era) store assets in
-their own tables, keyed by the VORP `charid` integer:
+The original VORP-era BCC resources (BryceCanyonCounty upstream) stored assets
+in their own tables, keyed by the VORP `charid` integer. This inventory describes
+the legacy starting point; the Feather stables port now uses Assets UUIDs:
 
 | Resource | Table | Ownership fields | Type-specific state |
 |---|---|---|---|
@@ -323,13 +325,16 @@ They are bounded to 4096 bytes.
 | `Config.Authorization` | Policy actions `assets.asset.manage` and `assets.ownership.transfer`. |
 | `Config.Access` | `trustedReaders`, `trustedManagers` (with `privilegedManagers`), `trustedAuditors` (with `privilegedAuditors`). A privileged entry must also be in its trusted group. |
 
-Each consumer additionally needs its policy grants in
+Each consumer that mutates assets additionally needs its policy grants in
 `Config.servicePolicy['feather-assets'][<resource>]` of feather-admin. Restart
 feather-admin after changing it.
 
-Current trusted resources: `feather-assets`, `feather-admin` and `bcc-stables`
-(reader, manager, auditor, with both policy grants). Add `bcc-wagons` and
-`bcc-boats` the same way as each Feather port lands.
+Current trusted resources are `feather-assets`, `feather-admin` and `bcc-stables`
+in the reader, manager and auditor groups. Only feather-admin is privileged.
+The development server's feather-admin configuration grants `bcc-stables` both
+Assets policy actions; trust entries alone do not grant mutation permission.
+Add `bcc-wagons` and `bcc-boats` trust and policy entries as each port lands.
+Read-only consumers need reader trust, without mutation policy grants.
 
 ## Database access
 
@@ -343,7 +348,7 @@ modified; a mismatch fails readiness.
 
 | Phase | Work |
 |---|---|
-| A3 runtime adapters | Port `bcc-stables` to Feather against this contract: register on purchase/capture, `CheckInterest` before spawn, metadata for name/components, `RetireAsset` on death, own table for XP/health/stamina keyed by `assetId`. |
+| A3 runtime adapters | `bcc-stables` 2.0.0 implements registration, ownership checks, metadata, transfer and retirement, with gameplay state keyed by `assetId`. Purchase, tack and saddlebags passed live on 2026-10-03. Validate the remaining flows, including trade, capture and retirement; see the port's `FEATHER_PORT.md`. |
 | A4 second type | Port `bcc-wagons` and confirm wagons fit without type-specific branches before freezing Contract 1. Then `bcc-boats`. |
-| Legacy migration | A one-shot import per port that maps `charid` to character UUIDs and registers each legacy row with `provenanceType = 'legacy_<table>'`, `provenanceId = <old id>` (idempotent by provenance). |
+| Legacy migration | Needed only for servers with legacy data; no import ships with the stables port because this development server had no `player_horses` table. An import must map `charid` to character UUIDs and register each legacy row with `provenanceType = 'legacy_<table>'`, `provenanceId = <old id>` (idempotent by provenance). |
 | A5 access decision | Keys, shared mounts and organization-pool use go to `feather-access`, not new interest types here. |
