@@ -26,7 +26,7 @@ enabled. Development commands are not registered. The permanent server-console
 | Gate | State |
 |---|---|
 | Static check (lua-language-server, error level) | Passed 2026-10-03 |
-| `AssetsReleaseContractSmokeTest` (9 checks) | Not yet run on the server |
+| `AssetsReleaseContractSmokeTest` (9 checks) | Passed 9/9 on the server 2026-10-13 |
 | `AssetsLifecycleSmokeTest` (21 checks, DevMode) | Not yet run on the server |
 | First consumer (`bcc-stables` Feather port) | Registration and metadata revision passed live 2026-10-03; transfer and retirement not yet exercised (see `bcc-stables/FEATHER_PORT.md`) |
 
