@@ -5,6 +5,7 @@ local Ok, Err = Assets.Ok, Assets.Err
 local selectAsset = [[
     SELECT r.`asset_id`,r.`asset_type`,r.`model_key`,r.`status`,r.`manager_resource`,
         r.`provenance_type`,r.`provenance_id`,r.`metadata_version`,r.`metadata_json`,r.`revision`,
+        r.`delegation_epoch`,
         FLOOR(UNIX_TIMESTAMP(r.`created_at`))*1000 AS created_at_ms,
         FLOOR(UNIX_TIMESTAMP(r.`updated_at`))*1000 AS updated_at_ms,
         FLOOR(UNIX_TIMESTAMP(r.`retired_at`))*1000 AS retired_at_ms,
@@ -24,6 +25,7 @@ function AssetRecords.Snapshot(row, includeMetadata)
     local statusValid = Assets.Statuses[row.status] or row.status == 'retired'
     if not Assets.Uuid(row.asset_id) or not Assets.Key(row.asset_type, 32) or not statusValid
         or not Assets.Integer(tonumber(row.revision), 1, Assets.MaxRevision + 1)
+        or not Assets.Integer(tonumber(row.delegation_epoch), 1, Assets.MaxRevision + 1)
         or (row.status ~= 'retired' and not Assets.Uuid(row.interest_id)) then
         return Err('invalid_persistence', 'Persisted asset is invalid.')
     end
@@ -37,6 +39,7 @@ function AssetRecords.Snapshot(row, includeMetadata)
         provenanceId = row.provenance_id,
         metadataVersion = tonumber(row.metadata_version),
         revision = tonumber(row.revision),
+        delegationEpoch = tonumber(row.delegation_epoch),
         createdAt = tonumber(row.created_at_ms),
         updatedAt = tonumber(row.updated_at_ms),
         retiredAt = row.retired_at_ms and tonumber(row.retired_at_ms) or nil
@@ -73,7 +76,8 @@ end
 -- receipt -> asset record -> interests.
 function AssetRecords.Lock(tx, assetId)
     return (tx.query([[
-        SELECT `asset_id`,`asset_type`,`model_key`,`status`,`manager_resource`,`metadata_version`,`revision`
+        SELECT `asset_id`,`asset_type`,`model_key`,`status`,`manager_resource`,`metadata_version`,`revision`,
+            `delegation_epoch`
         FROM `feather_asset_records`
         WHERE `asset_id`=? FOR UPDATE]], assetId) or {})[1]
 end
@@ -224,7 +228,8 @@ function AssetRecords.Register(request, resource)
                     provenanceType = request.provenanceType,
                     provenanceId = request.provenanceId,
                     managerResource = resource,
-                    metadataVersion = metadataVersion
+                    metadataVersion = metadataVersion,
+                    delegationEpoch = 1
                 }
             }, ids[3])
             return AssetRecords.Read(tx, assetId)
@@ -387,7 +392,8 @@ end
 
 -- RetireAsset ------------------------------------------------------------------
 -- Terminal: the asset (a dead horse, a destroyed wagon) keeps its record and
--- history, and its owner interest ends in the same commit.
+-- history, and its owner interest ends in the same commit. The delegation epoch
+-- rises too, so no grant made under the last owner can apply again.
 
 local retireFields = Assets.Allowed({ 'assetId', 'expectedRevision' })
 
@@ -435,7 +441,8 @@ function AssetRecords.Retire(request, resource)
             end
             tx.exec([[
                 UPDATE `feather_asset_records`
-                SET `status`='retired',`retired_at`=CURRENT_TIMESTAMP,`revision`=`revision`+1
+                SET `status`='retired',`retired_at`=CURRENT_TIMESTAMP,`revision`=`revision`+1,
+                    `delegation_epoch`=`delegation_epoch`+1
                 WHERE `asset_id`=? AND `revision`=?]], request.assetId, revision)
 
             AssetEvents.Record(tx, 'asset.retired', {
@@ -453,7 +460,8 @@ function AssetRecords.Retire(request, resource)
                 details = {
                     status = 'retired',
                     previousStatus = row.status,
-                    previousInterestId = owner and owner.interest_id
+                    previousInterestId = owner and owner.interest_id,
+                    delegationEpoch = tonumber(row.delegation_epoch) + 1
                 }
             })
             return AssetRecords.Read(tx, request.assetId)

@@ -82,6 +82,13 @@ RegisterCommand('AssetsReleaseContractSmokeTest', function(source)
         local events = AssetEvents.State()
         local migrations = tonumber(DB.value('SELECT COUNT(*) FROM `feather_asset_schema_migrations`'))
         local denied = AssetRecords.Get({ assetId = '00000000-0000-0000-0000-000000000000' }, 'untrusted-smoke-caller')
+        -- Integrity: every live asset has exactly one owner, a retired one none.
+        local broken = tonumber(DB.value([[
+            SELECT COUNT(*) FROM `feather_asset_records` r
+            WHERE (r.`status`<>'retired') <> (
+                SELECT COUNT(*) FROM `feather_asset_interests` i
+                WHERE i.`asset_id`=r.`asset_id` AND i.`interest_type`='owner' AND i.`status`='active'
+            )]]))
         local tests = {
             { 'service ready', health.ok and health.value.state == 'ready' },
             { 'server development disabled', Config.DevMode == false },
@@ -91,8 +98,10 @@ RegisterCommand('AssetsReleaseContractSmokeTest', function(source)
             { 'migration ledger', migrations == AssetMigrations.Count },
             { 'owned route registered', routeFound },
             { 'untrusted reader denied', not denied.ok and denied.code == 'authorization_denied' },
+            { 'one owner per live asset', broken == 0 },
             { 'contract capabilities', capabilities.ok and capabilities.value.contract == 1
-                and capabilities.value.features.ownership == 1 }
+                and capabilities.value.features.ownership == 1
+                and capabilities.value.features.delegationEpoch == 1 }
         }
         local passed = 0
         for _, test in ipairs(tests) do

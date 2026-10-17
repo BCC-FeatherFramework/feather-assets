@@ -6,7 +6,7 @@ lua54 'yes'
 name 'feather-assets'
 author 'Feather Framework'
 description 'Authoritative registry of persistent world assets (horses, wagons, boats) and their ownership for the Feather Framework'
-version '0.1.0'
+version '0.2.0'
 
 server_scripts {
     '@feather-mysql/lib/DB.lua',

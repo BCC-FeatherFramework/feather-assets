@@ -115,6 +115,17 @@ local definitions = {
                 ADD COLUMN IF NOT EXISTS `reference_id` VARCHAR(128) NULL AFTER `reference_type`,
                 ADD KEY IF NOT EXISTS `idx_asset_event_reference` (`reference_type`,`reference_id`)]]
         }
+    },
+    {
+        id = '005_asset_delegation_epoch',
+        statements = {
+            -- Target-owned generation for delegated use (feather-access). It rises
+            -- in the same commit as an owner change or retirement and never on a
+            -- status or metadata change, so the general revision cannot stand in
+            -- for it. Existing assets start at 1; no grants exist before this.
+            [[ALTER TABLE `feather_asset_records`
+                ADD COLUMN IF NOT EXISTS `delegation_epoch` BIGINT UNSIGNED NOT NULL DEFAULT 1 AFTER `revision`]]
+        }
     }
 }
 AssetMigrations.Count = #definitions

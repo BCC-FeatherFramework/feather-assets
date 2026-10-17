@@ -13,10 +13,13 @@ ownership changes through it.
 
 ## Status
 
-Version 0.1.0, a pre-release of Feather Contract 1. The release and lifecycle
-acceptance tests pass. The API may still change before Contract 1 is frozen;
-the freeze follows validation with a second and third asset type. Only `horse`
-is enabled by default; see [Asset types](#asset-types).
+Version 0.2.0. [Contract 1](CONTRACT.md) is proposed for freezing: the master
+plan phases A0 to A5 are complete (see [ASSETS_PLAN.md](ASSETS_PLAN.md)).
+`horse`, `wagon` and `boat` are enabled and share one service with no
+type-specific code. bcc-stables is the first consumer.
+
+`CONTRACT.md` is the reference to code against; this README explains the model
+and setup.
 
 ## Requirements
 
@@ -50,8 +53,9 @@ decided by Core's default policy provider (feather-admin).
    [Configuration and access](#configuration-and-access)) and restart
    feather-admin and feather-organizations so they load their entries.
 
-A fresh install applies four checksummed migrations and logs
-`event=startup.ready migrationsApplied=4 routes=1`. Later starts apply none.
+A fresh install applies five checksummed migrations and logs
+`event=startup.ready migrationsApplied=5 routes=1`. Later starts apply none (an
+upgrade from 0.1.0 applies one: `005_asset_delegation_epoch`).
 
 ## Verification
 
@@ -61,19 +65,21 @@ Read-only, safe on a live server:
 AssetsReleaseContractSmokeTest
 ```
 
-Expect 9/9 with `Config.DevMode = false`.
+Expect 10/10 with `Config.DevMode = false`. It includes an integrity check:
+every asset that is not retired has exactly one owner, and a retired one none.
 
 The lifecycle test changes data, so it runs only with `Config.DevMode = true` on
 a development server. Nobody needs to be online: pass two different characters
 as character UUIDs (or server IDs of connected players).
 
 ```text
-AssetsLifecycleSmokeTest <serverId|characterUuid> <otherServerId|otherCharacterUuid>
+AssetsLifecycleSmokeTest <serverId|characterUuid> <otherServerId|otherCharacterUuid> [assetType]
 ```
 
-Expect 21/21. It registers a test horse for the first character, races two
-concurrent transfers to the second (exactly one must win), revises metadata and
-status, and retires the horse. The test runs as feather-assets, so it needs the
+Expect 23/23 for each type (`horse` by default, then `wagon` and `boat`). It
+registers a test asset for the first character, races two concurrent transfers
+to the second (exactly one must win), revises metadata, transfers the asset
+back (a new delegation epoch, not the old one), holds it and retires it. The test runs as feather-assets, so it needs the
 two Assets policy actions granted to `feather-assets` while it runs. Set DevMode
 back to `false`, remove that grant and restart afterwards.
 
@@ -92,7 +98,7 @@ the calling resource has no policy grant; add it and restart feather-admin.
 - **One owner.** A unique active slot per asset and interest type makes double
   ownership impossible at the database level.
 - **No duplicate registration.** Provenance (`provenanceType` +
-  `provenanceId`) is unique per asset. Registering the same purchase, capture or
+  `provenanceId`) is unique per managing resource. Registering the same purchase, capture or
   imported row twice returns `asset_exists` with the existing `assetId`.
 - **Concurrent sales.** Transfers lock the asset row and require
   `expectedRevision`. Of two concurrent sales, one commits and the other gets
@@ -107,6 +113,10 @@ the calling resource has no policy grant; add it and restart feather-admin.
   server source ID, so they survive entity deletion and restarts.
 - **Offline owners.** Character UUIDs resolve through the Character provider
   whether or not the character is online.
+- **Delegation epoch.** `delegationEpoch` rises by 1 with every owner change
+  and on retirement, never on status or metadata changes, and is never reused.
+  feather-access will bind shared use (keys, shared mounts) to it, so a sale
+  ends every grant at once.
 
 ## Server exports
 
@@ -151,7 +161,7 @@ returns the full asset snapshot with its new `revision`.
 |---|---|---|
 | `GetAsset` | `assetId` | Asset snapshot with `owner` and `metadata` |
 | `ListAssetsByHolder` | `holderType`, `holderId`, optional `assetType`, `status`, `includeMetadata`, `limit`, `cursor` | `{ items, nextCursor }`, newest first |
-| `CheckInterest` | `assetId`, `holderType`, `holderId`, optional `interestType` (`owner`) | `{ matched, interestId?, assetType, assetStatus }` |
+| `CheckInterest` | `assetId`, `holderType`, `holderId`, optional `interestType` (`owner`) | `{ matched, interestType, interestId?, assetType, assetStatus, delegationEpoch }` |
 | `FindOperation` | `requestId` | The caller's stored result, for recovery after a timeout |
 | `InspectAssetHistory` | `assetId`, optional `limit`, `cursor` | Audit trail; managers read their own assets, privileged auditors read all |
 
@@ -173,6 +183,7 @@ release it.
     metadataVersion = 1,
     metadata = { name = 'Silver', gender = 'female', components = { ... } },
     revision = 3,
+    delegationEpoch = 2,
     createdAt = 1759500000000,
     updatedAt = 1759500100000,
     retiredAt = nil,
@@ -202,7 +213,7 @@ bytes, depth 4, 256 nodes and 1024-character strings. Anything larger returns
 | `policy_unavailable` | Policy provider missing or indeterminate (Assets fails closed) |
 | `revision_conflict` | Stale `expectedRevision`; `details.revision` holds the current value |
 | `idempotency_conflict` | Request ID reused with a different payload |
-| `asset_exists` | Provenance already registered; `details.assetId` |
+| `asset_exists` | Provenance already registered by this manager; `details.assetId` |
 | `asset_not_found`, `asset_retired`, `asset_unavailable` | Missing, terminal, or not `active` for a transfer |
 | `holder_mismatch` | `fromHolder*` is not the current owner |
 | `holder_not_found`, `holder_inactive`, `holder_type_not_allowed`, `holder_provider_unavailable` | Holder validation |
@@ -254,7 +265,7 @@ local check = Assets:CheckInterest({
 ## Client route
 
 `assets.owned.list.v1` takes an empty payload or `{ assetType = 'horse' }` and
-returns the calling player's own active assets (`assetId`, `assetType`,
+returns the calling player's own assets (`assetId`, `assetType`,
 `modelKey`, `status`), at most `Config.Limits.maxClientAssets`. It leaves out
 the manager, provenance and metadata, requires an active character, and is rate
 limited. Clients cannot change anything.
@@ -272,10 +283,11 @@ assets.metadata.revised.v1
 assets.asset.retired.v1
 ```
 
-Payloads carry `assetId`, `assetType`, the current holder, `revision`, the
-source resource, request, reason, actor and correlation fields, plus details for
-the event (previous holder, previous status, metadata versions). They are at
-most 4096 bytes.
+Payloads carry `eventId`, `assetId`, `assetType`, the current holder,
+`revision`, the source resource, request, reason, actor and correlation fields,
+plus details for the event (previous holder, previous status, metadata
+versions, the new `delegationEpoch` on transfer and retirement). They are at
+most 4096 bytes. Delivery is at least once; deduplicate by `eventId`.
 
 ## Configuration and access
 
@@ -312,10 +324,14 @@ A resource that only reads needs reader trust and no policy grants.
 
 ### Asset types
 
-Only `horse` is enabled in the shipped configuration. `wagon` and `boat` are
-included, commented out. To enable a type, add it to `Config.AssetTypes` with
-the holder types that may own it. Type keys are stored on every asset: never
-rename or remove one once assets of that type exist.
+`horse`, `wagon` and `boat` are enabled in the shipped configuration, each
+ownable by characters and organizations. To add a type, add it to
+`Config.AssetTypes` with the holder types that may own it. Type keys are stored
+on every asset: never rename or remove one once assets of that type exist.
+
+What a stable, wagon or boat resource keeps itself (selection, XP, condition,
+fuel, storage) and what goes to Assets is listed in
+[ASSETS_PLAN.md](ASSETS_PLAN.md#2-a0-consumer-inventory).
 
 ## Importing existing data
 
@@ -333,7 +349,22 @@ Only Assets writes `feather_asset_records`, `feather_asset_interests`,
 never query these tables. Applied migrations are checksummed and must not be
 edited; a mismatch fails readiness.
 
+## Backup and rollback
+
+Back up the six `feather_asset_*` tables together, in one consistent dump
+(`mysqldump --single-transaction`): receipts, events and outbox must match the
+records, or replays and history break. Consumer tables keyed by asset UUID
+(stables, wagons) belong in the same backup window.
+
+Migrations only add tables and columns. Rolling back the resource to 0.1.0
+after 0.2.0 has run is safe for data (0.1.0 ignores `delegation_epoch`; only
+its release test fails "migration ledger", 5 rows for 4 migrations), but 0.1.0
+does not advance the epoch, so do not run feather-access against a rolled-back
+Assets.
+
 ## Not in this release
 
 - Interests other than `owner` (liens, insurance).
-- Delegated use such as keys or shared mounts, planned for `feather-access`.
+- An Access target provider and grant preservation on transfer. The delegation
+  epoch is in place; the rest waits for the feather-access Phase 0 contract
+  (see [ASSETS_PLAN.md](ASSETS_PLAN.md#5-a5-delegation-and-the-access-integration-request-2026-10-14)).

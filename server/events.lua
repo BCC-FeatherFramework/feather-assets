@@ -26,7 +26,8 @@ local detailFields = {
     'provenanceId',
     'managerResource',
     'metadataVersion',
-    'previousMetadataVersion'
+    'previousMetadataVersion',
+    'delegationEpoch'
 }
 
 -- Writes audit facts and their outbox rows inside the caller's transaction:

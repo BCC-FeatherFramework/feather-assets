@@ -8,6 +8,8 @@ local Ok, Err = Assets.Ok, Assets.Err
 -- just checked the seller passes fromHolderType/fromHolderId so a stale view of
 -- the owner is rejected (holder_mismatch) instead of silently overwritten.
 -- Only an 'active' asset can change hands; held and missing assets cannot.
+-- The delegation epoch rises in the same commit, so grants made under the
+-- previous owner stop applying at once, even on a later return to that owner.
 
 local transferFields = Assets.Allowed({
     'assetId',
@@ -109,7 +111,8 @@ function AssetInterests.Transfer(request, resource)
                 interestId, request.assetId, request.toHolderType, request.toHolderId,
                 request.assetId .. '|owner', nowSeconds)
             tx.exec([[
-                UPDATE `feather_asset_records` SET `revision`=`revision`+1
+                UPDATE `feather_asset_records`
+                SET `revision`=`revision`+1,`delegation_epoch`=`delegation_epoch`+1
                 WHERE `asset_id`=? AND `revision`=?]], request.assetId, revision)
 
             AssetEvents.Record(tx, 'ownership.transferred', {
@@ -129,7 +132,8 @@ function AssetInterests.Transfer(request, resource)
                     interestId = interestId,
                     previousInterestId = owner.interest_id,
                     previousHolderType = owner.holder_type,
-                    previousHolderId = owner.holder_id
+                    previousHolderId = owner.holder_id,
+                    delegationEpoch = tonumber(row.delegation_epoch) + 1
                 }
             }, ids[2])
             return AssetRecords.Read(tx, request.assetId)
@@ -164,7 +168,7 @@ function AssetInterests.Check(request, resource)
         return Err('invalid_input', 'Asset UUID, holder type and UUID, and supported interest type required.')
     end
     local row = DB.one([[
-        SELECT r.`asset_type`,r.`status`,i.`interest_id`
+        SELECT r.`asset_type`,r.`status`,r.`delegation_epoch`,i.`interest_id`
         FROM `feather_asset_records` r
         LEFT JOIN `feather_asset_interests` i
             ON i.`asset_id`=r.`asset_id` AND i.`interest_type`=? AND i.`status`='active'
@@ -179,7 +183,8 @@ function AssetInterests.Check(request, resource)
         interestType = interestType,
         interestId = row.interest_id,
         assetType = row.asset_type,
-        assetStatus = row.status
+        assetStatus = row.status,
+        delegationEpoch = tonumber(row.delegation_epoch)
     })
 end
 

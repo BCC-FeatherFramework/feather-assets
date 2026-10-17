@@ -312,6 +312,8 @@ function Assets.GetCapabilities()
             references = 1,
             holderValidation = 1,
             clientSnapshot = 1,
+            delegationEpoch = 1,
+            accessProvider = 0,
             liens = 0,
             custody = 0,
             legacyMigration = 0
